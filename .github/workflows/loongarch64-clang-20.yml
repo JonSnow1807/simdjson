@@ -1,0 +1,43 @@
+name: Ubuntu loongarch64 LSX/LASX (clang 20)
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+# A new push to a pull request cancels its previous run. Other runs (pushes to
+# master, schedules) get a group of their own and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install packages
+      run: |
+        sudo apt-get update -q -y
+        sudo apt-get install -y cmake make g++-14-loongarch64-linux-gnu qemu-user-static clang-20
+    - name: Build
+      run: |
+        CC=clang-20 CXX=clang++-20 CFLAGS="--target=loongarch64-linux-gnu" CXXFLAGS="${CFLAGS}" \
+        cmake --toolchain=cmake/toolchains-ci/loongarch64-linux-gnu.cmake -DSIMDJSON_DEVELOPER_MODE=ON -B build
+        cmake --build build/ -j$(nproc) --config Release
+    # The build only assumes LSX. LASX is selected at runtime when available.
+    - name: Test with LASX
+      run: |
+        export QEMU_LD_PREFIX="/usr/loongarch64-linux-gnu"
+        export QEMU_CPU="la464"
+        qemu-loongarch64-static build/tests/checkimplementation lasx
+        ctest --timeout 1800 --output-on-failure --test-dir build -j $(nproc)
+    - name: Test without LASX
+      run: |
+        export QEMU_LD_PREFIX="/usr/loongarch64-linux-gnu"
+        export QEMU_CPU="la464,lasx=off"
+        qemu-loongarch64-static build/tests/checkimplementation lsx
+        ctest --timeout 1800 --output-on-failure --test-dir build -j $(nproc)
